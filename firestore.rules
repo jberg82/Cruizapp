@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuth() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+
+    function isNotBanned() {
+      return isAuth() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isBanned != true;
+    }
+
+    // User profiles
+    match /users/{userId} {
+      allow read: if isAuth();
+      allow create: if isAuth() && request.auth.uid == userId;
+      allow update: if (isAuth() && request.auth.uid == userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Chat rooms (metadata)
+    match /rooms/{roomId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+
+      // Room messages
+      match /messages/{messageId} {
+        allow read: if isAuth();
+        allow create: if isAuth() && isNotBanned()
+          && request.resource.data.senderId == request.auth.uid;
+        allow update: if isAdmin();
+        allow delete: if isAdmin()
+          || (isAuth() && resource.data.senderId == request.auth.uid);
+      }
+    }
+
+    // Direct message conversations
+    match /conversations/{conversationId} {
+      allow read: if isAuth() && request.auth.uid in resource.data.participants;
+      allow create: if isAuth() && request.auth.uid in request.resource.data.participants;
+      allow update: if isAuth() && request.auth.uid in resource.data.participants;
+
+      match /messages/{messageId} {
+        allow read: if isAuth()
+          && request.auth.uid in
+            get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+        allow create: if isAuth() && isNotBanned()
+          && request.resource.data.senderId == request.auth.uid
+          && request.auth.uid in
+            get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+        allow delete: if isAdmin()
+          || (isAuth() && resource.data.senderId == request.auth.uid);
+      }
+    }
+  }
+}
